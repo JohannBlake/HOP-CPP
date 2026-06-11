@@ -1,0 +1,23 @@
+# Tested with Python 3.10 on Linux.
+numpy==2.1.3
+torch
+gymnasium==0.28.1
+safety-gymnasium==0.4.1
+pyyaml
+wandb==0.22.2
+opencv-python-headless==4.12.0.88
+scikit-image==0.25.0
+matplotlib==3.10.0
+scipy==1.15.3
+shapely==2.1.2
+geopandas==1.1.1
+geopy==2.4.1
+pyproj==3.7.1
+pandas==2.2.3
+tqdm
+rich
+moviepy
+tensorboard
+gdown==5.2.0
+seaborn==0.13.2
+typer==0.9.0

@@ -10,6 +10,8 @@ venv/
 # Training output / logs / runs / experiments
 logs/
 misc/logs/
+misc/cache/
+vis_output/
 runs/
 experiments/
 .experiments/

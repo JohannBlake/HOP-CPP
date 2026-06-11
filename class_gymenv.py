@@ -405,7 +405,14 @@ class GymnasiumEnv(gym.Env):
         # ========================================
         # LIDAR PARAMETERS (for ablation study)
         # ========================================
-        if not para.ablation_study_use_radiation_instead_of_lidar:
+        # Lidar obstacle tracking is needed either when lidar is the sensing
+        # modality, or when wall gliding uses borders reconstructed from lidar
+        # points (the observation itself stays gated by the ablation flag).
+        self.lidar_obstacle_tracking_enabled = (
+            not para.ablation_study_use_radiation_instead_of_lidar
+            or (para.glide_on_collision and para.glide_use_reconstructed_lidar_borders)
+        )
+        if self.lidar_obstacle_tracking_enabled:
             self.lidar_rays = 24  # Number of lidar rays
             self.lidar_range = 3.5  # Range in meters
             self.lidar_fov = 180  # Field of view in degrees
@@ -1362,8 +1369,9 @@ class GymnasiumEnv(gym.Env):
         self.observed_radiation_points = np.empty((0, 3))
         self.observed_radiation_points_freshness = np.empty((0, 3))
         
-        # Initialize lidar obstacle maps if using lidar ablation study
-        if not para.ablation_study_use_radiation_instead_of_lidar:
+        # Initialize lidar obstacle maps if using lidar ablation study or
+        # lidar-reconstructed wall gliding
+        if self.lidar_obstacle_tracking_enabled:
             if para.z_rad_type == 'jon':
                 # For flat coordinate environment, use pixel-based maps
                 img_height, img_width = self.current_image_for_movement_restriction.shape
@@ -3833,8 +3841,9 @@ class GymnasiumEnv(gym.Env):
                 destination = distance(meters=self.distance_to_move_per_step).destination(GeopyPoint(self.position[1], self.position[0]), bearing=self.current_bearing)
                 self.update_position(np.array([destination.longitude, destination.latitude]))
             
-            # Compute lidar observations if using lidar ablation study
-            if not para.ablation_study_use_radiation_instead_of_lidar and para.z_rad_type == 'jon':
+            # Compute lidar observations if using lidar ablation study or
+            # lidar-reconstructed wall gliding
+            if self.lidar_obstacle_tracking_enabled and para.z_rad_type == 'jon':
                 # Compute lidar point cloud
                 lidar_pts, pts_info = self._compute_lidar_pts_flat(self.position, self.current_bearing)
                 # Store for use in observation
@@ -5305,32 +5314,65 @@ class GymnasiumEnv(gym.Env):
                     self.num_episode_collisions += 1
                     adjusted_position = None
                     try:
-                        obstacles = self.black_polygons
-                        if obstacles is not None and not obstacles.is_empty:
-                            candidate_position = np.array(new_position, dtype=float).flatten()[:2]
-                            new_point = ShapelyPoint(candidate_position[0], candidate_position[1])
-                            closest_on_obstacle, _ = nearest_points(obstacles, new_point)
+                        candidate_position = np.array(new_position, dtype=float).flatten()[:2]
 
-                            buffer_meters = getattr(para, 'buffer_between_agent_and_no_fly_zone_in_meters', 0.0)
-                            meters_per_pixel = getattr(self, 'meters_per_pixel_mower', None)
-                            if meters_per_pixel is None or meters_per_pixel <= 0:
-                                meters_per_pixel = 1.0
-                            buffer_pixels = buffer_meters / meters_per_pixel
+                        buffer_meters = getattr(para, 'buffer_between_agent_and_no_fly_zone_in_meters', 0.0)
+                        meters_per_pixel = getattr(self, 'meters_per_pixel_mower', None)
+                        if meters_per_pixel is None or meters_per_pixel <= 0:
+                            meters_per_pixel = 1.0
+                        buffer_pixels = buffer_meters / meters_per_pixel
 
-                            obstacle_point = np.array([closest_on_obstacle.x, closest_on_obstacle.y], dtype=float)
+                        obstacle_point = None
+                        if para.glide_use_reconstructed_lidar_borders:
+                            # Glide along obstacle borders reconstructed from lidar
+                            # points: only border segments already discovered by
+                            # lidar can be glided along. Undiscovered walls stop
+                            # the agent (fallback to last position below).
+                            if (getattr(self, 'obstacle_segments_discovered', None) is not None
+                                    and np.any(self.obstacle_segments_discovered)):
+                                discovered_points = self.obstacle_segments[self.obstacle_segments_discovered]
+                                deltas = discovered_points - candidate_position
+                                nearest_idx = int(np.argmin((deltas * deltas).sum(axis=1)))
+                                nearest_point = discovered_points[nearest_idx].astype(float)
+                                segment_length_pixels = self.segment_length_meters / meters_per_pixel
+                                # Only glide if the nearest discovered border point is
+                                # plausibly the wall being hit; a far-away point would
+                                # teleport the agent to a different wall.
+                                max_glide_distance = self.base_cone_radius + buffer_pixels + 2.0 * segment_length_pixels
+                                if np.linalg.norm(candidate_position - nearest_point) <= max_glide_distance:
+                                    obstacle_point = nearest_point
+                        else:
+                            obstacles = self.black_polygons
+                            if obstacles is not None and not obstacles.is_empty:
+                                new_point = ShapelyPoint(candidate_position[0], candidate_position[1])
+                                closest_on_obstacle, _ = nearest_points(obstacles, new_point)
+                                obstacle_point = np.array([closest_on_obstacle.x, closest_on_obstacle.y], dtype=float)
+
+                        if obstacle_point is not None:
                             direction = candidate_position - obstacle_point
                             norm = np.linalg.norm(direction)
 
                             if norm > 0:
                                 unit_direction = direction / norm
-                                adjusted_position = obstacle_point + unit_direction * max(buffer_pixels, 0.0)
+                                # The reconstructed border is sampled discretely, so a
+                                # push-out from a sampled point can land slightly too
+                                # close to the true wall; retry with extra clearance.
+                                if para.glide_use_reconstructed_lidar_borders:
+                                    segment_length_pixels = self.segment_length_meters / meters_per_pixel
+                                    extra_margins = [0.0, segment_length_pixels,
+                                                     2.0 * segment_length_pixels, 4.0 * segment_length_pixels]
+                                else:
+                                    extra_margins = [0.0]
+                                for extra_margin in extra_margins:
+                                    candidate_adjusted = obstacle_point + unit_direction * (max(buffer_pixels, 0.0) + extra_margin)
+                                    if self.is_measuring_cone_clear_of_black_polygons(candidate_adjusted):
+                                        adjusted_position = candidate_adjusted
+                                        break
 
                         if adjusted_position is None:
                             adjusted_position = np.array(self.last_position, dtype=float)
 
                         new_position = adjusted_position
-                        if not self.is_measuring_cone_clear_of_black_polygons(new_position):
-                            new_position = self.last_position
                     except Exception as e:
                         print(f"Warning: Failed to adjust position away from black polygons: {e}")
                         new_position = self.last_position

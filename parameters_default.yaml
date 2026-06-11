@@ -6,42 +6,29 @@ ablation_study_use_frontier_maps: false
 ablation_study_use_optv: true
 ablation_study_use_radiation_instead_of_lidar: true
 ablation_study_use_visit_frequency: true
-agents_per_gpu: 1
 anchor_point:
 - 8.18362
 - 47.6014
 base_timestep: 20
-batch_size: 32
 buffer_between_agent_and_no_fly_zone_in_meters: 0.15
-buffer_size: 1600000
-clip_range: 0.3
-commit_id: 8c9b1e22a49a0bc284d353daf313058919647f23
 constant_goal_coverage: true
 constant_radiation_reward: -2
-cpus_per_task: 16
-create_lookup_files: true
 delete_small_polygons: false
 dilation_for_coverage_limit_calculation_m: 0.25
 dilation_for_coverage_limit_original_mower_env_value_pixels: 9
 dilation_of_black_polygons_in_m: 0.021
 distance_east_from_anchor_point: 10000
 distance_north_from_anchor_point: 10000
-dummy_or_subproc: subproc
 early_termination_episode_step_limit: 30000
-ent_coef: 0.8
 episode_length_added: 50
 episode_length_factor: 1.75
-file_name_to_run_via_cluster: train_model_with_multiple_agents.py
-gamma: 0.97
 glide_on_collision: true
+glide_use_reconstructed_lidar_borders: true
 goal_coverage_percentage: 0.99
-gradient_steps_sac: 1
-gradient_steps_td3: 1
 granularity: 33
 granularity_cpp_maps_from_paper: 44
 how_to_calculate_odl: via simulated radiation grid
 improved_odl_scaling_factor: 0.23
-include_action_noise: true
 include_direction_z_achsis_in_observation: false
 include_gaussian_blob_around_first_two_radiation_points_in_observation_scaled_by_radiation_value: true
 include_measurement_reward: true
@@ -49,12 +36,7 @@ include_time_in_observation: false
 include_tv_reward: true
 largest_horizontal_turning_angle_deg: 91
 largest_vertical_height_change_per_second: 5
-learning_rate: 0.0001
-learning_rate_sac: 1.0e-05
-learning_rate_td3: 5.0e-05
-learning_starts: 100000
 limit_for_target_area_size: 15000
-logging_frequency: 30000
 loop_max_steps: 3
 loop_step_until_radiation_above_threshold: false
 max_distance: 500
@@ -65,16 +47,11 @@ measured_area_heatmap_granularity: 4
 motion_blur_image_number: 80
 multiply_measurement_reward_by_inverse_time_left_included: false
 multiply_measurement_reward_by_inverse_time_left_multiplier: 7
-n_epochs: 6
-n_eval_episodes: 500
-n_steps: 256
 name_of_geocoordinates_array: programmatically_loaded_heightmap_geocoordinates
 name_of_heightmap: programmatically_loaded_heightmap
-num_envs_for_training: 16
 observation_space_is_box: true
 observed_image_size: 64
 omnisafe_alg: TD3Lag
-policy_type: MultiInputPolicy
 progression_threshold_without_reward_for_time_passed: 0.88
 radiation_detection_threshold: 5
 radiation_value_cutoff: -0.5
@@ -86,13 +63,11 @@ restrict_movement_to_white_pixels: true
 rew_weight_height_interpolation: 0.1
 reward_for_little_action_weight_of_summand: 0.0
 reward_for_time_passed: -0.1
-sb3_model_type: SAC
 scale_measurement_reward: false
 scale_measurement_reward_end_value: 1.5
 scale_measurement_reward_start_value: 0.5
 seed: 52
 set_episode_length_based_on_first_episode_length: false
-sigma_coef_for_noise: 0.2
 sizes_of_target_area_km2:
 - 17
 sizes_of_target_area_km2_probabilities:
@@ -101,18 +76,10 @@ speed_in_meters_per_second: 0.26
 split_episodes_into_sub_episodes: false
 start_time: 1656316000.0
 surface_grid_creation_type: no_height_map
-sweep_info: ' 100000 scenarios'
-time_for_benchmark: 0-05:59:00
-time_for_each_agent: 9-23:59:00
-total_timesteps_for_training: 10000000000
-train_freq_sac: 2
-train_freq_td3: 2
 training_library: omnisafe
-update_omnisafe_config_world_model_parameter_to: false
 use_motion_blur: false
 use_size_based_probability: true
 use_tv_reward_decay: false
 weight_incremental_tv_reward: 0.75
 weight_incremental_tv_reward_zero_after_steps: 1000000
-worker_to_use_with_slurm_command: '#SBATCH --exclude=worker-1,worker-2,worker-3,worker-4,worker-5,worker-6,worker-7,worker-9,worker-10'
 z_rad_type: jon

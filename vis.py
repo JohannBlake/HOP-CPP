@@ -1,138 +1,123 @@
-###############################################################################
-###############################################################################
-num_runs_displayed = 1
-sweep_ids = ["3ptw6brg"] # y4amqq8z
-step_number_from_wandb = None
-num_episodes_to_skip = 0
-visualization_step_interval = 10  # Save visualization data every Nth step (1 = every step)
-cluster = 'lmu'
-###############################################################################
-###############################################################################
+# Visualize a trained HOP-CPP agent.
+#
+# Loads a checkpoint produced by train.py (misc/logs/runs/.../torch_save/epoch-*.pt),
+# rolls out deterministic episodes in the coverage environment, prints episode
+# metrics, and saves one trajectory image per episode.
+#
+# Usage:
+#   python vis.py --model path/to/epoch-N.pt [--episodes 3] [--out vis_output]
+from __future__ import annotations
 
-if step_number_from_wandb is not None:
-    constrained_model_number = str(step_number_from_wandb + 1)
-else:
-    constrained_model_number = ""
-debug_mode = False
-
-import wandb
+import argparse
+import importlib.util
 import os
-import git
-import subprocess
 import sys
-import json
-import datetime
-import shutil
-import tempfile
 
-# Define main folders
-main_folder = os.getcwd()
-git_clones_folder = os.path.join(main_folder, 'git_clones')
-html_data_folder = os.path.join(main_folder, 'html_data')
-run_ids_to_be_considered = []
+import numpy as np
+import torch
+import yaml
 
-def get_timestamp():
-    return datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
-def get_commit_depth(repo_url, commit_id):
-    with tempfile.TemporaryDirectory() as tmpdirname:
-        subprocess.run(
-            ["git", "clone", "--bare", "--filter=blob:none", "--no-checkout", repo_url, tmpdirname],
-            check=True, capture_output=True
-        )
-        repo = git.Repo(tmpdirname)
-        try:
-            default_branch_ref = repo.git.symbolic_ref("HEAD")
-            default_branch = default_branch_ref.split("/")[-1]
-        except Exception:
-            default_branch = 'main' if 'refs/heads/main' in repo.refs else 'master'
-        count = repo.git.rev_list("--count", f"{default_branch}", f"^{commit_id}")
-        return int(count) + 1
+def load_vendored_omnisafe():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "omnisafe")
+    spec = importlib.util.spec_from_file_location("omnisafe", os.path.join(path, "__init__.py"))
+    omnisafe = importlib.util.module_from_spec(spec)
+    sys.modules["omnisafe"] = omnisafe
+    spec.loader.exec_module(omnisafe)
+    return omnisafe
 
-def clone_repo(repo_url, folder_name, commit_id):
-    os.system('git config --global http.postBuffer 157286400')
-    if os.path.exists(folder_name):
-        print(f"Skip clone (Already exists).")
-        repo = git.Repo(folder_name)
-    else:
-        print(f"Finding depth for commit {commit_id}...")
-        depth = get_commit_depth(repo_url, commit_id)
-        print(f"Cloning with depth={depth} to include commit {commit_id}")
-        repo = git.Repo.clone_from(repo_url, folder_name, depth=depth)
-        print(f"Repository cloned to {folder_name}")
-    
-    print(f"Checking out to commit {commit_id}")
-    try:
-        repo.git.checkout(commit_id, force=True)
-        print(f"Checked out to commit {commit_id}")
-    except git.exc.GitCommandError:
-        print(f"Checkout failed. Fetching commit {commit_id}...")
-        try:
-            repo.git.fetch("origin", commit_id)
-            repo.git.checkout(commit_id, force=True)
-            print(f"Checked out to commit {commit_id}")
-        except git.exc.GitCommandError:
-             print("Fetch specific commit failed, trying to fetch all...")
-             repo.git.fetch("--all")
-             repo.git.checkout(commit_id, force=True)
-             print(f"Checked out to commit {commit_id}")
 
-def process_sweep(sweep_id, api, timestamp, repo_url):
-    sweep_path = f"johanndavidblake-ludwig-maximilianuniversity-of-munich/Heli-Logs/{sweep_id}"
-    sweep = api.sweep(sweep_path)
-    runs = sweep.runs
-    run_ids = [run.id for run in runs]
-    if run_ids_to_be_considered:
-        run_ids = [run_id for run_id in run_ids if run_id in run_ids_to_be_considered]
+def parse_args():
+    parser = argparse.ArgumentParser(description="Visualize a trained HOP-CPP agent.")
+    parser.add_argument("--model", type=str, required=True,
+                        help="Path to a checkpoint, e.g. misc/logs/runs/.../torch_save/epoch-10.pt")
+    parser.add_argument("--episodes", type=int, default=1, help="Number of episodes to roll out.")
+    parser.add_argument("--out", type=str, default="vis_output", help="Output directory for trajectory PNGs.")
+    parser.add_argument("--seed", type=int, default=0, help="Environment seed for the first episode.")
+    parser.add_argument("--max-steps", type=int, default=8000, help="Step cap per episode.")
+    parser.add_argument("--device", type=str, default=None,
+                        help="Torch device (default: cuda if available, else cpu).")
+    return parser.parse_args()
 
-    first_run_id = run_ids[0]
-    run = api.run(f"{sweep_path}/{first_run_id}")
-    commit_id_fitting_to_model = run.config['commit_id']
-    sweep_base_folder = os.path.join(git_clones_folder, sweep_id)
-    sweep_base_folder_test_file = os.path.join(sweep_base_folder, 'Simulation', 'parameters_default.yaml')
 
-    if os.path.exists(sweep_base_folder) and not os.path.exists(sweep_base_folder_test_file):
-        shutil.rmtree(sweep_base_folder)
+def build_policy(model_path, observation_space, action_space, device):
+    from omnisafe.models.actor.actor_builder import ActorBuilder
 
-    base_folder = os.path.join(sweep_base_folder, 'Simulation')
-    clone_repo(repo_url, base_folder, commit_id_fitting_to_model)
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "omnisafe", "configs", "off-policy", "TD3Lag.yaml")
+    with open(config_path, "r") as f:
+        alg_config = yaml.safe_load(f)
+    actor_type = alg_config["defaults"]["model_cfgs"]["actor_type"]
+    hidden_sizes = alg_config["defaults"]["model_cfgs"]["actor"]["hidden_sizes"]
 
-    target_file_path = os.path.join(base_folder, 'step_through_gymenv_and_save_data_for_vis.py')
-    source_file_path = os.path.join(main_folder, "misc", "aid", 'step_through_gymenv_and_save_data_for_vis.py')
-    shutil.copy2(source_file_path, target_file_path)
+    actor_builder = ActorBuilder(observation_space, action_space, hidden_sizes=hidden_sizes)
+    policy = actor_builder.build_actor(actor_type=actor_type)
 
-    try:
-        result = subprocess.run([
-            sys.executable, target_file_path,
-            '--sweep-id', sweep_id,
-            '--num-runs', str(num_runs_displayed),
-            '--cluster', cluster,
-            '--main-folder', main_folder,
-            '--git-clones-folder', git_clones_folder,
-            '--html-data-folder', html_data_folder,
-            '--timestamp', timestamp,
-            '--base-folder', base_folder,
-            '--commit-id', commit_id_fitting_to_model,
-            '--run-ids', json.dumps(run_ids),
-            '--run-ids-to-be-considered', json.dumps(run_ids_to_be_considered),
-            '--constrained-model-number', constrained_model_number,
-            '--debug-mode', str(debug_mode),
-            '--num-episodes-to-skip', str(num_episodes_to_skip),
-            '--visualization-step-interval', str(visualization_step_interval),
-        ], check=True)
+    state = torch.load(model_path, map_location="cpu")
+    state_dict = state.get("pi", state)
+    model_state_dict = policy.state_dict()
+    filtered_state_dict = {}
+    for k, v in state_dict.items():
+        if k in model_state_dict and v.shape == model_state_dict[k].shape:
+            filtered_state_dict[k] = v
+        elif k in model_state_dict:
+            print(f"Warning: shape mismatch for {k}: checkpoint {v.shape} vs model {model_state_dict[k].shape}")
+    policy.load_state_dict(filtered_state_dict, strict=False)
+    policy.eval()
+    return policy.to(device)
 
-    except subprocess.CalledProcessError as e:
-        print(f"Error occurred while running subprocess:")
-        print(f"Return code: {e.returncode}")
-        print(f"Command: {' '.join(e.cmd)}")
-        raise
+
+def to_scalar(x):
+    return float(x.item()) if hasattr(x, "item") else float(x)
+
 
 def main():
-    timestamp = get_timestamp()
-    api = wandb.Api()
-    repo_url = "https://github.com/JohannBlake/Simulation.git"
-    for sweep_id in sweep_ids:
-        process_sweep(sweep_id, api, timestamp, repo_url)
+    args = parse_args()
+    device = torch.device(args.device if args.device else ("cuda" if torch.cuda.is_available() else "cpu"))
+    os.makedirs(args.out, exist_ok=True)
+
+    load_vendored_omnisafe()
+    import class_gymenv  # registers GymEnvOmniSafe-v0; must follow omnisafe load
+
+    env = class_gymenv.GymEnvOmniSafe(radiation_grid_visualization=False, is_evaluation=True)
+    gymenv = env._env.env  # unwrapped GymnasiumEnv (for render + metrics)
+
+    policy = build_policy(args.model, env.observation_space, env.action_space, device)
+
+    obs, _ = env.reset(seed=args.seed)
+    for episode in range(args.episodes):
+        terminated = truncated = False
+        ep_reward = 0.0
+        ep_cost = 0.0
+        steps = 0
+        while not (terminated or truncated) and steps < args.max_steps:
+            with torch.no_grad():
+                if isinstance(obs, np.ndarray):
+                    obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device)
+                else:
+                    obs_tensor = obs.to(device)
+                action = policy.predict(obs_tensor, deterministic=True)
+                if isinstance(action, torch.Tensor):
+                    action = action.cpu()
+            obs, reward, cost, terminated, truncated, _info = env.step(action)
+            terminated = bool(to_scalar(terminated))
+            truncated = bool(to_scalar(truncated))
+            ep_reward += to_scalar(reward)
+            ep_cost += to_scalar(cost)
+            steps += 1
+
+        collisions = getattr(gymenv, "num_episode_collisions", float("nan"))
+        coverage = 1.0 - float(getattr(gymenv, "percentage_of_target_area_left", float("nan")))
+        print(f"Episode {episode}: steps={steps} return={ep_reward:.2f} cost={ep_cost:.2f} "
+              f"collisions={collisions} coverage={coverage:.3f}")
+
+        # Resetting flushes the finished episode into previous_episode_data,
+        # which render() draws from; it also starts the next episode.
+        obs, _ = env.reset(seed=args.seed + episode + 1)
+        save_path = os.path.join(args.out, f"episode_{episode}.png")
+        gymenv.render(save_path=save_path)
+        print(f"Saved trajectory image to {save_path}")
+
 
 if __name__ == "__main__":
     main()
