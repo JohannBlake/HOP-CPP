@@ -4695,7 +4695,16 @@ class GymnasiumEnv(gym.Env):
         self._cached_boundary_coords_dense = None
 
         # Calculate boundaries and measurements using safe operations
-        self.new_measured_area_size = abs(self.new_measured_area_with_black_polygons.area) if self.new_measured_area_with_black_polygons is not None else 0.0
+        # Count newly measured area only within the same region the coverage
+        # denominator uses (map borders minus dilated obstacles); cone overhang
+        # beyond the outer wall or over obstacles must not count as coverage.
+        new_measured_clipped = self.safe_geometry_intersection(
+            self.new_measured_area_with_black_polygons, self.initial_target_area_borders) \
+            if self.new_measured_area_with_black_polygons is not None else None
+        if new_measured_clipped is not None and getattr(self, 'black_polygons_dilated_for_coverage_calc', None) is not None:
+            new_measured_clipped = self.safe_geometry_difference(
+                new_measured_clipped, self.black_polygons_dilated_for_coverage_calc)
+        self.new_measured_area_size = abs(new_measured_clipped.area) if new_measured_clipped is not None else 0.0
         new_measured_area_minus_black = self.safe_geometry_difference(self.new_measured_area, self.black_polygons_dilated)
         self.new_measured_area_boundary = self.safe_boundary(new_measured_area_minus_black) if new_measured_area_minus_black is not None and not new_measured_area_minus_black.is_empty else None
         cone_black_boundary = self.safe_boundary(cone_black_intersection) if cone_black_intersection is not None and not cone_black_intersection.is_empty else None
@@ -5304,8 +5313,13 @@ class GymnasiumEnv(gym.Env):
         return original_bearing, False
 
     def update_position(self, new_position):
-        # Clip position to initial target area if using jon radiation type
         self.last_position = self.position.copy()
+        # Clip position to the map borders: beyond the outer wall there are no
+        # black polygons, so the cone-clear check alone cannot keep the agent
+        # inside the map.
+        if para.z_rad_type == 'jon' and getattr(self, 'initial_target_area_borders', None) is not None:
+            new_position = self.clip_position_to_initial_target_area(
+                np.asarray(new_position, dtype=float).flatten()[:2])
         # Apply black polygon avoidance restriction if enabled
         if para.restrict_movement_to_white_pixels and para.z_rad_type == 'jon':
             if not self.is_measuring_cone_clear_of_black_polygons(new_position):
@@ -5365,9 +5379,17 @@ class GymnasiumEnv(gym.Env):
                                     extra_margins = [0.0]
                                 for extra_margin in extra_margins:
                                     candidate_adjusted = obstacle_point + unit_direction * (max(buffer_pixels, 0.0) + extra_margin)
-                                    if self.is_measuring_cone_clear_of_black_polygons(candidate_adjusted):
-                                        adjusted_position = candidate_adjusted
-                                        break
+                                    if not self.is_measuring_cone_clear_of_black_polygons(candidate_adjusted):
+                                        continue
+                                    # Never glide through a wall: the path from the
+                                    # last valid position to the adjusted one must
+                                    # itself stay clear of obstacles.
+                                    last_pos = np.asarray(self.last_position, dtype=float).flatten()[:2]
+                                    glide_path = LineString([tuple(last_pos), tuple(candidate_adjusted)])
+                                    if self.black_polygons is not None and glide_path.intersects(self.black_polygons):
+                                        continue
+                                    adjusted_position = candidate_adjusted
+                                    break
 
                         if adjusted_position is None:
                             adjusted_position = np.array(self.last_position, dtype=float)
