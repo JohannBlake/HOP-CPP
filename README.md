@@ -1,3 +1,4 @@
+<img width="4032" height="1996" alt="agent_behavior_fragmentation_issue_and_stuck_behavior_without_visit_frequency" src="https://github.com/user-attachments/assets/8dee9df7-8f92-40d5-8aeb-9d2036922e0c" />
 # HOP-CPP
 
 Code for the HOP-CPP paper: a constrained reinforcement-learning agent
