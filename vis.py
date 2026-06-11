@@ -106,14 +106,22 @@ def main():
             ep_cost += to_scalar(cost)
             steps += 1
 
-        collisions = getattr(gymenv, "num_episode_collisions", float("nan"))
-        coverage = 1.0 - float(getattr(gymenv, "percentage_of_target_area_left", float("nan")))
-        print(f"Episode {episode}: steps={steps} return={ep_reward:.2f} cost={ep_cost:.2f} "
-              f"collisions={collisions} coverage={coverage:.3f}")
+        if terminated or truncated:
+            # The internal AutoResetWrapper has already reset the env and
+            # flushed the finished episode into previous_episode_data; the
+            # obs from the last step is the next episode's initial obs.
+            collisions = getattr(gymenv, "last_episode_collisions", float("nan"))
+        else:
+            # Step cap hit: flush the episode manually (starts the next one).
+            collisions = getattr(gymenv, "num_episode_collisions", float("nan"))
+            obs, _ = env.reset(seed=args.seed + episode + 1)
 
-        # Resetting flushes the finished episode into previous_episode_data,
-        # which render() draws from; it also starts the next episode.
-        obs, _ = env.reset(seed=args.seed + episode + 1)
+        ep_data = getattr(gymenv, "previous_episode_data", {})
+        coverage = 1.0 - float(ep_data.get("percentage_of_target_area_left", float("nan")))
+        path_length = float(ep_data.get("length_of_path_in_meters", float("nan")))
+        print(f"Episode {episode}: steps={steps} return={ep_reward:.2f} cost={ep_cost:.2f} "
+              f"collisions={collisions} coverage={coverage:.3f} path_length_m={path_length:.1f}")
+
         save_path = os.path.join(args.out, f"episode_{episode}.png")
         gymenv.render(save_path=save_path)
         print(f"Saved trajectory image to {save_path}")
