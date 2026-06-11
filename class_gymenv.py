@@ -1407,7 +1407,10 @@ class GymnasiumEnv(gym.Env):
         # This prevents positions from find_safe_starting_point from being included
         self.position_history = []
         
-        # Update position and radiation exposure
+        # Update position and radiation exposure. Initial placement, not
+        # movement: pre-set the position so the swept-area movement physics
+        # don't reject the teleport to the start point.
+        self.position = np.asarray(self.anchor_point, dtype=float).flatten()[:2].copy()
         self.update_position(self.anchor_point)
         
         # Initialize measurement state attributes
@@ -2903,63 +2906,55 @@ class GymnasiumEnv(gym.Env):
         t2 = time.perf_counter()
         self._log_detailed_time('lidar_compute_angle_setup', t2 - t1)
         
-        # Initialize outputs
-        lidar_pts = np.zeros((self.lidar_rays, 2), dtype=np.int32)
-        pts_info = np.zeros(self.lidar_rays, dtype=np.int32)
-        
         t1 = time.perf_counter()
-        # Process each ray (still need loop for collision detection, but vectorize sampling)
-        for n in range(self.lidar_rays):
-            search_vec = search_vecs[n]
-            
-            # Generate all sample points along this ray at once
-            sample_indices = np.arange(1, samples + 1)
-            offsets = sample_indices[:, np.newaxis] * search_vec  # shape: [samples, 2]
-            positions = position + offsets  # shape: [samples, 2]
-            
-            # Convert to integer indices
-            j_coords = positions[:, 0].astype(np.int32)  # x coordinates
-            i_coords = positions[:, 1].astype(np.int32)  # y coordinates
-            
-            # Check bounds for all samples at once
-            valid_mask = (i_coords >= 0) & (i_coords < map_height) & (j_coords >= 0) & (j_coords < map_width)
-            
-            # Find first out-of-bounds sample
-            if not valid_mask.all():
-                first_invalid = np.argmax(~valid_mask)
-                if first_invalid == 0 or not valid_mask[0]:
-                    # First sample is already out of bounds
-                    pts_info[n] = 3
-                    lidar_pts[n] = [int(position[0] + search_vec[0]), int(position[1] + search_vec[1])]
-                    continue
-                # Trim to valid samples only
-                j_coords = j_coords[:first_invalid]
-                i_coords = i_coords[:first_invalid]
-            
-            # Check for known obstacles (vectorized lookup)
-            if len(i_coords) > 0:
-                known_obstacles = self.known_obstacle_map[i_coords, j_coords]
-                known_hit_idx = np.argmax(known_obstacles > 0)
-                
-                if known_obstacles[known_hit_idx] > 0:
-                    pts_info[n] = 1
-                    lidar_pts[n] = [j_coords[known_hit_idx], i_coords[known_hit_idx]]
-                    continue
-                
-                # Check for unknown obstacles (vectorized lookup)
-                unknown_obstacles = self.unknown_obstacle_map[i_coords, j_coords]
-                unknown_hit_idx = np.argmax(unknown_obstacles > 0)
-                
-                if unknown_obstacles[unknown_hit_idx] > 0:
-                    pts_info[n] = 2
-                    lidar_pts[n] = [j_coords[unknown_hit_idx], i_coords[unknown_hit_idx]]
-                    continue
-            
-            # If no obstacle detected, store max range point
-            if pts_info[n] == 0:
-                offset = samples * search_vec
-                pos = position + offset
-                lidar_pts[n] = [int(pos[0]), int(pos[1])]
+        # Fully vectorized ray casting over all rays and samples at once.
+        # Shapes: [rays, samples] grids; first hit along each ray found via argmax.
+        num_rays = self.lidar_rays
+        position = np.asarray(position, dtype=np.float64).flatten()[:2]
+        sample_indices = np.arange(1, samples + 1, dtype=np.float64)
+        # positions[r, s] = position + (s+1) * search_vecs[r]
+        positions = position[None, None, :] + sample_indices[None, :, None] * search_vecs[:, None, :]
+        j_grid = positions[..., 0].astype(np.int32)  # x coordinates
+        i_grid = positions[..., 1].astype(np.int32)  # y coordinates
+
+        valid = (i_grid >= 0) & (i_grid < map_height) & (j_grid >= 0) & (j_grid < map_width)
+        invalid = ~valid
+        has_invalid = invalid.any(axis=1)
+        # Number of leading valid samples per ray (== first invalid index, or all samples)
+        ray_len = np.where(has_invalid, invalid.argmax(axis=1), samples)
+        in_range = np.arange(samples)[None, :] < ray_len[:, None]
+
+        i_clip = np.clip(i_grid, 0, map_height - 1)
+        j_clip = np.clip(j_grid, 0, map_width - 1)
+        known_hit = (self.known_obstacle_map[i_clip, j_clip] > 0) & in_range
+        unknown_hit = (self.unknown_obstacle_map[i_clip, j_clip] > 0) & in_range
+        has_known = known_hit.any(axis=1)
+        known_idx = known_hit.argmax(axis=1)
+        has_unknown = unknown_hit.any(axis=1)
+        unknown_idx = unknown_hit.argmax(axis=1)
+
+        lidar_pts = np.zeros((num_rays, 2), dtype=np.int32)
+        pts_info = np.zeros(num_rays, dtype=np.int32)
+        ray_ids = np.arange(num_rays)
+
+        oob = ray_len == 0  # first sample already out of bounds
+        pts_info[oob] = 3
+        lidar_pts[oob] = (position[None, :] + search_vecs[oob]).astype(np.int32)
+
+        # Known obstacles take priority over unknown along the whole (trimmed) ray,
+        # matching the original per-ray implementation.
+        m_known = ~oob & has_known
+        pts_info[m_known] = 1
+        lidar_pts[m_known, 0] = j_grid[ray_ids[m_known], known_idx[m_known]]
+        lidar_pts[m_known, 1] = i_grid[ray_ids[m_known], known_idx[m_known]]
+
+        m_unknown = ~oob & ~has_known & has_unknown
+        pts_info[m_unknown] = 2
+        lidar_pts[m_unknown, 0] = j_grid[ray_ids[m_unknown], unknown_idx[m_unknown]]
+        lidar_pts[m_unknown, 1] = i_grid[ray_ids[m_unknown], unknown_idx[m_unknown]]
+
+        m_free = ~oob & ~has_known & ~has_unknown
+        lidar_pts[m_free] = (position[None, :] + samples * search_vecs[m_free]).astype(np.int32)
         t2 = time.perf_counter()
         self._log_detailed_time('lidar_ray_casting_loop', t2 - t1)
         
@@ -2982,21 +2977,21 @@ class GymnasiumEnv(gym.Env):
         map_height, map_width = self.known_obstacle_map.shape
         
         t1 = time.perf_counter()
-        # Collect all detected obstacle points
-        detected_points = []
-        for n in range(self.lidar_rays):
-            if pts_info[n] in [1, 2]:
-                j, i = lidar_pts[n]  # [x, y] format
-                if 0 <= i < map_height and 0 <= j < map_width:
-                    # If it was unknown, make it known
-                    if pts_info[n] == 2:
-                        self.known_obstacle_map[i, j] = 1
-                    detected_points.append([j, i])
-        
+        # Collect all detected obstacle points (vectorized over rays)
+        hit_mask = (pts_info == 1) | (pts_info == 2)
+        j_hits = lidar_pts[hit_mask, 0]
+        i_hits = lidar_pts[hit_mask, 1]
+        in_bounds = (i_hits >= 0) & (i_hits < map_height) & (j_hits >= 0) & (j_hits < map_width)
+        j_hits = j_hits[in_bounds]
+        i_hits = i_hits[in_bounds]
+        # Newly discovered (previously unknown) obstacle pixels become known
+        unknown_sel = pts_info[hit_mask][in_bounds] == 2
+        self.known_obstacle_map[i_hits[unknown_sel], j_hits[unknown_sel]] = 1
+
         # Query KDTree to find nearest segments for all detected points at once
-        if len(detected_points) > 0:
-            detected_points = np.array(detected_points, dtype=np.float32)
-            
+        if len(j_hits) > 0:
+            detected_points = np.stack([j_hits, i_hits], axis=1).astype(np.float32)
+
             # Find nearest segment for each detected point (within reasonable distance)
             distances, indices = self.obstacle_segments_kdtree.query(detected_points, k=1)
             
@@ -3029,24 +3024,11 @@ class GymnasiumEnv(gym.Env):
         --------
         lidar_obs : array of lidar distances, normalized to [0, 1]
         """
-        lidar_obs = np.ones(self.lidar_rays, dtype=np.float32)
-        
-        for n in range(self.lidar_rays):
-            # Calculate distance from position to lidar point
-            offset = lidar_pts[n] - position  # Both in [x, y] format
-            dist_pixels = np.sqrt(offset[0]**2 + offset[1]**2)
-            
-            # Convert to meters
-            dist_meters = dist_pixels * self.meters_per_pixel_mower
-            
-            # Add noise if specified
-            if self.lidar_noise > 0:
-                dist_meters = np.random.normal(loc=dist_meters, scale=self.lidar_noise)
-            
-            # Normalize to [0, 1] range based on lidar max range
-            lidar_obs[n] = np.clip(dist_meters / self.lidar_range, 0, 1)
-        
-        return lidar_obs
+        offsets = np.asarray(lidar_pts, dtype=np.float64) - np.asarray(position, dtype=np.float64)
+        dist_meters = np.sqrt((offsets ** 2).sum(axis=1)) * self.meters_per_pixel_mower
+        if self.lidar_noise > 0:
+            dist_meters = np.random.normal(loc=dist_meters, scale=self.lidar_noise)
+        return np.clip(dist_meters / self.lidar_range, 0, 1).astype(np.float32)
 
     def get_observation_as_images(self):
         
@@ -5029,6 +5011,44 @@ class GymnasiumEnv(gym.Env):
 
         return intersection is None or intersection.is_empty
 
+    def is_swept_area_clear_of_black_polygons(self, start_position, end_position):
+        """
+        Check that the agent's full body (disk of base_cone_radius) stays clear of
+        black polygons along the straight move from start to end. Endpoint disk
+        checks alone let the body sweep across thin walls or obstacle corners.
+        """
+        if not hasattr(self, 'black_polygons') or self.black_polygons is None or self.black_polygons.is_empty:
+            return True
+        start = np.asarray(start_position, dtype=float).flatten()[:2]
+        end = np.asarray(end_position, dtype=float).flatten()[:2]
+        if not (np.isfinite(start).all() and np.isfinite(end).all()):
+            return False
+        if np.linalg.norm(end - start) < 1e-12:
+            return self.is_measuring_cone_clear_of_black_polygons(end)
+        try:
+            capsule = LineString([tuple(start), tuple(end)]).buffer(self.base_cone_radius - 1e-9)
+            if not capsule.is_valid:
+                capsule = make_valid(capsule)
+        except Exception:
+            return False
+        return not capsule.intersects(self.black_polygons)
+
+    def _min_distance_from_segment_to_points(self, start, end, points):
+        """Min distance from the segment [start, end] to a set of 2D points
+        (pass start == end for a single-position check)."""
+        start = np.asarray(start, dtype=float).flatten()[:2]
+        end = np.asarray(end, dtype=float).flatten()[:2]
+        pts = np.asarray(points, dtype=float)
+        if pts.size == 0:
+            return np.inf
+        d = end - start
+        seg_len_sq = float(d @ d)
+        if seg_len_sq < 1e-24:
+            diffs = pts - end
+        else:
+            t = np.clip((pts - start) @ d / seg_len_sq, 0.0, 1.0)
+            diffs = pts - (start[None, :] + t[:, None] * d[None, :])
+        return float(np.sqrt((diffs * diffs).sum(axis=1).min()))
 
     def find_closest_position_with_clear_cone(self, position):
         """
@@ -5322,7 +5342,13 @@ class GymnasiumEnv(gym.Env):
                 np.asarray(new_position, dtype=float).flatten()[:2])
         # Apply black polygon avoidance restriction if enabled
         if para.restrict_movement_to_white_pixels and para.z_rad_type == 'jon':
-            if not self.is_measuring_cone_clear_of_black_polygons(new_position):
+            collision_detected = not self.is_measuring_cone_clear_of_black_polygons(new_position)
+            if not collision_detected:
+                # Even with a clear destination disk, the agent's body can sweep
+                # across an obstacle corner or thin wall while moving there.
+                collision_detected = not self.is_swept_area_clear_of_black_polygons(
+                    self.last_position, new_position)
+            if collision_detected:
                 if para.glide_on_collision:
                     # Increment collision counter when measuring cone intersects with black polygons
                     self.num_episode_collisions += 1
@@ -5368,28 +5394,52 @@ class GymnasiumEnv(gym.Env):
 
                             if norm > 0:
                                 unit_direction = direction / norm
-                                # The reconstructed border is sampled discretely, so a
-                                # push-out from a sampled point can land slightly too
-                                # close to the true wall; retry with extra clearance.
+                                last_pos = np.asarray(self.last_position, dtype=float).flatten()[:2]
                                 if para.glide_use_reconstructed_lidar_borders:
+                                    # Lidar mode: the landing is chosen using ONLY the
+                                    # perceived (lidar-discovered) border points —
+                                    # ground truth must not guide behaviour here. The
+                                    # reconstructed border is sampled discretely, so
+                                    # retry with extra clearance margins against the
+                                    # perceived points.
                                     segment_length_pixels = self.segment_length_meters / meters_per_pixel
-                                    extra_margins = [0.0, segment_length_pixels,
-                                                     2.0 * segment_length_pixels, 4.0 * segment_length_pixels]
+                                    # Half a border-sample spacing of slack: the true wall
+                                    # can be slightly closer than the nearest discrete
+                                    # border sample, and a landing at exactly cone-radius
+                                    # distance would *touch* the wall (= collision).
+                                    required_clearance = (max(buffer_pixels, self.base_cone_radius)
+                                                          + 0.5 * segment_length_pixels)
+                                    committed = None
+                                    for extra_margin in [0.0, segment_length_pixels,
+                                                         2.0 * segment_length_pixels,
+                                                         4.0 * segment_length_pixels]:
+                                        candidate_adjusted = obstacle_point + unit_direction * (required_clearance + extra_margin)
+                                        # landing disk clear of all perceived border points
+                                        if self._min_distance_from_segment_to_points(
+                                                candidate_adjusted, candidate_adjusted,
+                                                discovered_points) < required_clearance - 1e-6:
+                                            continue
+                                        # swept body clear of all perceived border points
+                                        if self._min_distance_from_segment_to_points(
+                                                last_pos, candidate_adjusted,
+                                                discovered_points) < self.base_cone_radius - 1e-6:
+                                            continue
+                                        committed = candidate_adjusted
+                                        break
+                                    # Single physics validation of the committed move:
+                                    # the world either allows it or stops the agent.
+                                    # No ground-truth-guided search over candidates.
+                                    if committed is not None \
+                                            and self.is_measuring_cone_clear_of_black_polygons(committed) \
+                                            and self.is_swept_area_clear_of_black_polygons(last_pos, committed):
+                                        adjusted_position = committed
                                 else:
-                                    extra_margins = [0.0]
-                                for extra_margin in extra_margins:
-                                    candidate_adjusted = obstacle_point + unit_direction * (max(buffer_pixels, 0.0) + extra_margin)
-                                    if not self.is_measuring_cone_clear_of_black_polygons(candidate_adjusted):
-                                        continue
-                                    # Never glide through a wall: the path from the
-                                    # last valid position to the adjusted one must
-                                    # itself stay clear of obstacles.
-                                    last_pos = np.asarray(self.last_position, dtype=float).flatten()[:2]
-                                    glide_path = LineString([tuple(last_pos), tuple(candidate_adjusted)])
-                                    if self.black_polygons is not None and glide_path.intersects(self.black_polygons):
-                                        continue
-                                    adjusted_position = candidate_adjusted
-                                    break
+                                    # Ground-truth mode (upper bound / debugging): the
+                                    # true obstacle geometry may guide the landing.
+                                    candidate_adjusted = obstacle_point + unit_direction * max(buffer_pixels, 0.0)
+                                    if self.is_measuring_cone_clear_of_black_polygons(candidate_adjusted) \
+                                            and self.is_swept_area_clear_of_black_polygons(last_pos, candidate_adjusted):
+                                        adjusted_position = candidate_adjusted
 
                         if adjusted_position is None:
                             adjusted_position = np.array(self.last_position, dtype=float)
@@ -5553,7 +5603,16 @@ class GymnasiumEnv(gym.Env):
                     self.target_area_size_start_of_episode = abs(target_area_minus_black_polygons.area)
 
 
-            self.update_position(np.array([lon, lat]))
+            candidate = np.array([lon, lat], dtype=float)
+            if (para.restrict_movement_to_white_pixels and para.z_rad_type == 'jon'
+                    and not self.is_measuring_cone_clear_of_black_polygons(candidate)):
+                attempts += 1
+                continue
+            # Initial placement, not movement: pre-set the position so the
+            # movement physics (swept-area collision / glide) don't reject
+            # the cross-map teleport to the candidate start point.
+            self.position = candidate.copy()
+            self.update_position(candidate)
 
             # Always use the latest parameters from the environment
             radiation_exposure = self.calculate_odl()
