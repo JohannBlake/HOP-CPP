@@ -1,0 +1,14 @@
+entity: johanndavidblake-ludwig-maximilianuniversity-of-munich
+method: grid
+metric:
+  goal: maximize
+  name: reward
+parameters:
+  commit_id:
+    values:
+    - e9cc74c6ea78b0ef9e4b604f91967281b87ccaae
+  sweep_info:
+    values:
+    - none
+program: train.py
+project: Heli-Logs

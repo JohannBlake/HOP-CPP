@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.conda/
+*.egg-info/
+
+# Training output / logs / runs / experiments
+logs/
+misc/logs/
+runs/
+experiments/
+.experiments/
+wandb/
+model archive/
+git_clones/
+stable_baselines3/
+
+# Local data caches / generated geo data
+misc/html_data/
+misc/html_data.zip
+html_data/
+misc/sandbox/
+misc/tools/
+misc/3d_vis_archive/
+misc/random_actions_3d/
+misc/geo_data/downloads_from_opentopography/
+misc/geo_data/files_npy/
+misc/geo_data/height_data/height_data_for_vis.npy
+misc/radiation_data/simulated/
+misc/radiation_data/git_ignored/
+misc/radiation_data_bfs_simulation/
+radiation_data_bfs_sim/
+height_data_berlin.npy
+height_data_for_vis.npy
+
+# Notebooks (local exploration)
+*.ipynb
+
+# Large / generated artifacts
+*.mp4
+*.zip
+paper_vis/
+test_paper_vis/
+
+# OS / editor
+.vscode/
+.idea/
+.DS_Store
+desktop.ini
+Thumbs.db

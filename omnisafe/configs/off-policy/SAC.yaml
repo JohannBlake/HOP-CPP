@@ -1,0 +1,72 @@
+defaults:
+  seed: 0
+  train_cfgs:
+    device: cuda:0
+    torch_threads: 16
+    vector_env_nums: 1
+    parallel: 1
+    total_steps: 8000000
+    eval_episodes: 0
+  algo_cfgs:
+    steps_per_epoch: 80000
+    update_cycle: 1
+    update_iters: 1
+    size: 500000
+    batch_size: 256
+    reward_normalize: false
+    cost_normalize: false
+    obs_normalize: false
+    max_grad_norm: 40
+    use_critic_norm: false
+    critic_norm_coeff: 0.001
+    polyak: 0.005
+    gamma: 0.99
+    start_learning_steps: 5000
+    policy_delay: 2
+    use_exploration_noise: false
+    exploration_noise: 0.1
+    policy_noise: 0.2
+    policy_noise_clip: 0.5
+    alpha: 0.2
+    auto_alpha: true
+    use_cost: false
+  logger_cfgs:
+    use_wandb: true
+    wandb_project: Heli-Logs
+    use_tensorboard: false
+    save_model_freq: 1
+    log_dir: .experiments
+    window_lens: 1
+  model_cfgs:
+    weight_initialization_mode: kaiming_uniform
+    actor_type: cnn_sac
+    critic_type: cnn_q
+    linear_lr_decay: false
+    actor:
+      hidden_sizes:
+      - 256
+      - 256
+      activation: relu
+      lr: 2.0e-05
+    critic:
+      num_critics: 2
+      hidden_sizes:
+      - 256
+      - 256
+      activation: relu
+      lr: 2.0e-05
+    world_model:
+      use_world_model: false
+      num_layers: 6
+      num_heads: 8
+      embed_dim: 256
+      ffn_hidden_dim: 1024
+      dropout: 0.1
+      sequence_length: 64
+      lr: 0.0002
+      batch_size: 128
+      lambda_l2: 1.0e-06
+      lambda_kl: 0.001
+      beta: 0.1
+      update_iters: 1
+      start_learning_steps: 5000

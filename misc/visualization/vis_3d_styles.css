@@ -1,0 +1,192 @@
+html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+    background-color: #4f4d7a;
+    font-family: 'Source Code Pro', monospace;
+  }
+  #deck-container {
+    width: 100vw;
+    height: 100vh;
+  }
+  #top-controls {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 1000;
+    display: flex;
+    gap: 10px;
+    font-family: 'Source Code Pro', monospace;
+    color: #00FF00;
+  }
+  #top-controls select,
+  #top-controls input {
+    background: none;
+    color: #00FF00;
+    border: 1px solid #00FF00;
+    font-family: 'Source Code Pro', monospace;
+    outline: none;
+  }
+  #top-controls select:focus,
+  #top-controls input:focus {
+    outline: none;
+    border-color: #00FF00;
+  }
+  #top-controls select option {
+    background-color: black;
+    color: #00FF00;
+  }
+  #pointCloudSlider {
+    position: absolute;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 30%;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 3px;
+    background: #00FF00;
+    outline: none;
+    opacity: 0.7;
+    transition: opacity .2s;
+  }
+  #pointCloudSlider:hover {
+    opacity: 1;
+  }
+  #pointCloudSlider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    background: #00FF00;
+    cursor: pointer;
+  }
+  #pointCloudSlider::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    background: #00FF00;
+    cursor: pointer;
+  }
+  #animationSpeed {
+    background: none;
+    color: #00FF00;
+    border: 1px solid #00FF00;
+    font-family: 'Source Code Pro', monospace;
+    outline: none;
+    width: 80px;
+    appearance: textfield;
+    -moz-appearance: textfield;
+  }
+  #animationSpeed:focus {
+    outline: none;
+    border-color: #00FF00;
+  }
+  #animationSpeed::-webkit-outer-spin-button,
+  #animationSpeed::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  #menu-button, #toggle-metric-button, #togglePointCloudButton, #toggleObservationButton, #toggleMapButton, #toggleGreenChannel {
+    position: absolute;
+    top: 10px;
+    z-index: 1000;
+    padding: 0;
+    color: #00FF00;
+    cursor: pointer;
+    font-family: 'Source Code Pro', monospace;
+    background: none;
+    border: none;
+  }
+  #menu-button {
+    right: 10px;
+  }
+  #toggle-metric-button {
+    right: 70px;
+  }
+  #toggleMapButton {
+    right: 440px;
+  }
+  #toggleObservationButton {
+    right: 170px;
+  }
+  #togglePointCloudButton {
+    right: 290px;
+  }
+  #toggleGreenChannel {
+    right: 410px;
+  }
+  #menu-container {
+    display: none;
+    position: absolute;
+    top: 90px;
+    right: 10px;
+    z-index: 1000;
+    padding: 10px;
+    border-radius: 5px;
+    background-color: #333;
+    color: #00FF00;
+    font-family: 'Source Code Pro', monospace;
+  }
+  #menu-container input, #menu-container select {
+    background: none;
+    color: #00FF00;
+    border: 1px solid #00FF00;
+    margin-bottom: 10px;
+    font-family: 'Source Code Pro', monospace;
+  }
+  #metric-container {
+    position: absolute;
+    bottom: 40px;
+    left: 10px;
+    z-index: 1000;
+    padding: 10px;
+    border-radius: 5px;
+    color: #00FF00;
+    font-family: 'Source Code Pro', monospace;
+    display: none;
+  }
+  #config-container {
+    position: absolute;
+    bottom: 40px;
+    right: 10px;
+    z-index: 1000;
+    padding: 10px;
+    border-radius: 5px;
+    color: #00FF00;
+    font-family: 'Source Code Pro', monospace;
+    display: none;
+  }
+  .config-item, .metric-item {
+    display: grid;
+    grid-template-columns: auto 200px;
+    gap: 10px;
+    white-space: nowrap;
+  }
+  .config-item span:first-child,
+  .metric-item span:first-child {
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .config-item span:last-child,
+  .metric-item span:last-child {
+    text-align: left;
+  }
+  #observation-container {
+    position: absolute;
+    bottom: 10px;
+    right: 10px;
+    z-index: 1000;
+    display: none;
+    border: 2px solid #00FF00;
+    background-color: rgba(0, 0, 0, 0.8);
+    padding: 5px;
+  }
+  #observation-canvas {
+    display: block;
+    image-rendering: pixelated;
+    width: 344px;
+    height: 344px;
+  }
