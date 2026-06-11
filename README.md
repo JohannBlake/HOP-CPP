@@ -23,6 +23,12 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+Note: `pip install torch` pulls the newest CUDA build. If your NVIDIA driver is
+older, install a torch build matching your driver instead (see
+[pytorch.org](https://pytorch.org/get-started/locally/)), e.g. for CUDA 12.1
+drivers: `pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121`.
+CPU-only machines can train and visualize with `--device cpu`.
+
 ## Train an agent
 
 ```bash
