@@ -5396,19 +5396,20 @@ class GymnasiumEnv(gym.Env):
                                 unit_direction = direction / norm
                                 last_pos = np.asarray(self.last_position, dtype=float).flatten()[:2]
                                 if para.glide_use_reconstructed_lidar_borders:
-                                    # Lidar mode: the landing is chosen using ONLY the
-                                    # perceived (lidar-discovered) border points —
-                                    # ground truth must not guide behaviour here. The
-                                    # reconstructed border is sampled discretely, so
-                                    # retry with extra clearance margins against the
-                                    # perceived points.
+                                    # Lidar mode: the landing DIRECTION and the obstacle
+                                    # point come from ONLY the perceived (lidar-discovered)
+                                    # border points — ground truth never guides *where* to
+                                    # aim. We aim flush against the perceived wall (no
+                                    # discretization slack). Ground truth enters solely as
+                                    # the collision oracle: a candidate that would make the
+                                    # covered area overlap an obstacle polygon is illegal
+                                    # (physics, not perception), so we step the landing
+                                    # outward by border-sample increments until the covered
+                                    # area is clear. This guarantees the covered area never
+                                    # overlaps the obstacle polygons while keeping the
+                                    # landing as flush as the geometry physically allows.
                                     segment_length_pixels = self.segment_length_meters / meters_per_pixel
-                                    # Half a border-sample spacing of slack: the true wall
-                                    # can be slightly closer than the nearest discrete
-                                    # border sample, and a landing at exactly cone-radius
-                                    # distance would *touch* the wall (= collision).
-                                    required_clearance = (max(buffer_pixels, self.base_cone_radius)
-                                                          + 0.5 * segment_length_pixels)
+                                    required_clearance = max(buffer_pixels, self.base_cone_radius)
                                     committed = None
                                     for extra_margin in [0.0, segment_length_pixels,
                                                          2.0 * segment_length_pixels,
@@ -5424,14 +5425,14 @@ class GymnasiumEnv(gym.Env):
                                                 last_pos, candidate_adjusted,
                                                 discovered_points) < self.base_cone_radius - 1e-6:
                                             continue
+                                        # covered area + swept body must not overlap the
+                                        # true obstacle polygons (hard collision constraint)
+                                        if not (self.is_measuring_cone_clear_of_black_polygons(candidate_adjusted)
+                                                and self.is_swept_area_clear_of_black_polygons(last_pos, candidate_adjusted)):
+                                            continue
                                         committed = candidate_adjusted
                                         break
-                                    # Single physics validation of the committed move:
-                                    # the world either allows it or stops the agent.
-                                    # No ground-truth-guided search over candidates.
-                                    if committed is not None \
-                                            and self.is_measuring_cone_clear_of_black_polygons(committed) \
-                                            and self.is_swept_area_clear_of_black_polygons(last_pos, committed):
+                                    if committed is not None:
                                         adjusted_position = committed
                                 else:
                                     # Ground-truth mode (upper bound / debugging): the
