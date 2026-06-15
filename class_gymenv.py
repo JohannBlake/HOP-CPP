@@ -4692,7 +4692,20 @@ class GymnasiumEnv(gym.Env):
         cone_black_boundary = self.safe_boundary(cone_black_intersection) if cone_black_intersection is not None and not cone_black_intersection.is_empty else None
         self.cone_union_last_cone_convex_hull_intersection_target_area_boundary = self.safe_boundary(self.cone_union_last_cone_convex_hull_intersection_target_area) if self.cone_union_last_cone_convex_hull_intersection_target_area is not None and not self.cone_union_last_cone_convex_hull_intersection_target_area.is_empty else None
 
-        self.new_measured_area_boundary_intersection_black_polygon_boundary = self.safe_line_intersection(self.new_measured_area_boundary, cone_black_boundary) if self.new_measured_area_boundary is not None and cone_black_boundary is not None else None
+        # Raw boundary-vs-boundary line intersection degenerates to isolated
+        # points when the two boundaries are collinear/touching (GEOS precision),
+        # zeroing black_length on flush wall contact. Measure instead the portion
+        # of the new-measured-area boundary lying on the wall boundary via a tiny
+        # buffer (1e-3 px; faithful — genuine gaps stay at 0, see optv_diag).
+        if self.new_measured_area_boundary is not None and cone_black_boundary is not None:
+            try:
+                self.new_measured_area_boundary_intersection_black_polygon_boundary = \
+                    cone_black_boundary.buffer(1e-3).intersection(self.new_measured_area_boundary)
+            except Exception:
+                self.new_measured_area_boundary_intersection_black_polygon_boundary = \
+                    self.safe_line_intersection(self.new_measured_area_boundary, cone_black_boundary)
+        else:
+            self.new_measured_area_boundary_intersection_black_polygon_boundary = None
         target_area_minus_black = self.safe_geometry_difference(self.cone_union_last_cone_convex_hull_intersection_target_area, self.black_polygons_dilated)
         self.new_measured_area_boundary_intersection_target_area_boundary = self.safe_geometry_intersection(new_measured_area_minus_black, target_area_minus_black) if new_measured_area_minus_black is not None and target_area_minus_black is not None else None
 
